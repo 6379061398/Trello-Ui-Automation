@@ -1,0 +1,167 @@
+import { test, expect } from '@playwright/test';
+import * as dotenv from 'dotenv';
+import path from 'path';
+
+dotenv.config();
+
+test.setTimeout(120000); // Extend timeout for slow UI loads
+
+test('Trello Board Automation', async ({ page }) => {
+  const email = process.env.TRELLO_EMAIL!;
+  const password = process.env.TRELLO_PASSWORD!;
+  const timestamp = Date.now();
+  const initials = 'SS';
+  const boardName = `QA Scrum Board - ${initials} - ${timestamp}`;
+  const labelColors = ['green', 'yellow', 'orange'];
+
+  
+    // 1. Login to Trello
+    await page.goto('https://trello.com/login');
+    await page.fill("//input[@name='username']", email);
+    await page.click("//span[text()='Continue']");
+    await page.waitForSelector('#password', { timeout: 10000 });
+    await page.fill('#password', password);
+    await page.click('#login-submit');
+    await page.waitForNavigation();
+
+    // 2. Create a new board
+    await page.goto('https://trello.com');
+    await page.click("//a[text()='Log in']");
+    await page.waitForSelector("//span[text()='Create new board']", { timeout: 10000 });
+    await page.click("//span[text()='Create new board']");
+    await page.fill("//input[@data-testid='create-board-title-input']", boardName);
+    await page.click("//button[@data-testid='create-board-submit-button']");
+    await page.waitForURL('**/b/**');
+
+    // 3. Create lists
+    const lists = ['To Do', 'In Progress', 'Done'];
+    for (const list of lists) {
+      await page.getByPlaceholder('Enter list name…').fill(list);
+      await page.getByRole('button', { name: 'Add list' }).click();
+    }
+
+    // 4. Add a card to each list
+    for (let i = 0; i < 3; i++) {
+      const list = page.locator('[data-testid="list-wrapper"]').nth(i);
+      const addCardBtn = list.locator('button[data-testid="list-add-card-button"]');
+      await addCardBtn.waitFor({ state: 'visible' });
+      await addCardBtn.click();
+
+      const textArea = list.locator('textarea[data-testid="list-card-composer-textarea"]');
+      await textArea.waitFor({ state: 'visible' });
+      await textArea.fill(`Sample card ${i + 1}`);
+
+      const confirmBtn = list.locator('button[data-testid="list-card-composer-add-card-button"]');
+      await confirmBtn.click();
+
+      const cancelBtn = list.locator('a[data-testid="list-card-composer-cancel-button"]');
+      if (await cancelBtn.isVisible()) {
+        await cancelBtn.click();
+      }
+    }
+
+    // 5. Open each card and add label + description
+    const cards = page.locator('[data-testid="list-card"]');
+    for (let i = 0; i < 3; i++) {
+      const card = cards.nth(i);
+      await card.click();
+      await expect(page.getByText(`Sample card ${i + 1}`)).toBeVisible({ timeout: 5000 });
+
+      // Add label
+      const labelsBtn = page.getByRole('button', { name: 'Labels' });
+      await labelsBtn.waitFor({ state: 'visible' });
+      await labelsBtn.click();
+      const color = labelColors[i];
+      const labelLocator = page.locator(`//span[@data-testid="card-label" and @data-color="${color}"]`);
+      await expect(labelLocator).toBeVisible({ timeout: 10000 });
+      await labelLocator.first().click();
+      await page.keyboard.press('Escape'); // close label dialog
+
+      // Add description
+      const descBtn = page.getByRole('button', { name: 'Add a more detailed description…' });
+      await descBtn.click();
+
+      const descInput = page.locator('div[contenteditable="true"]').first();
+      await descInput.waitFor({ state: 'visible', timeout: 50000 });
+      await descInput.click();
+      await page.keyboard.type('This is an automated description added using Playwright.', { delay: 20 });
+
+      await page.getByRole('button', { name: 'Save' }).click();
+      //await page.close();
+      //await page.keyboard.press('Escape'); // close card
+
+      // Close label popup and card modal
+  await page.keyboard.press('Escape'); // Close label dialog
+  await page.keyboard.press('Escape'); // Close card
+
+  await page.waitForTimeout(300);
+    }
+
+    // 6. Attach file to first card
+    const firstCard = cards.nth(0);
+    await firstCard.click();
+    await expect(page.getByText('Sample card 1')).toBeVisible();
+
+    const attachBtn = page.getByRole('button', { name: 'Attachment' });
+    await attachBtn.click();
+
+    const filePath = path.resolve(__dirname, 'SAMARJEET_Resume.pdf');
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles(filePath);
+
+    await expect(page.getByText('SAMARJEET_Resume.pdf')).toBeVisible({ timeout: 10000 });
+    console.log('✅ File attached successfully.');
+    await page.keyboard.press('Escape');
+
+   // Get all list containers
+const allLists = page.locator('[data-testid="list-wrapper"]');
+
+// Locators for lists
+const toDoList = allLists.nth(0);
+const inProgressList = allLists.nth(1);
+const doneList = allLists.nth(2);
+
+// Card to move
+const moveCard = toDoList.locator('text=Sample card 1');
+await moveCard.waitFor({ state: 'visible' });
+await moveCard.scrollIntoViewIfNeeded();
+
+// Step 1: Drag from "To Do" → "In Progress"
+const cardBox = await moveCard.boundingBox();
+await inProgressList.scrollIntoViewIfNeeded();
+const inProgressBox = await inProgressList.boundingBox();
+
+if (cardBox && inProgressBox) {
+  await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(inProgressBox.x + inProgressBox.width / 2, inProgressBox.y + inProgressBox.height / 2, { steps: 20 });
+  await page.mouse.up();
+  await page.waitForTimeout(1000); // wait for UI update
+} else {
+  throw new Error("Bounding box not found for moveCard or inProgressList");
+}
+
+// Step 2: Drag from "In Progress" → "Done"
+const movedCard = inProgressList.locator('text=Sample card 1');
+await movedCard.waitFor({ state: 'visible' });
+await movedCard.scrollIntoViewIfNeeded();
+
+const movedCardBox = await movedCard.boundingBox();
+await doneList.scrollIntoViewIfNeeded();
+const doneBox = await doneList.boundingBox();
+
+if (movedCardBox && doneBox) {
+  await page.mouse.move(movedCardBox.x + movedCardBox.width / 2, movedCardBox.y + movedCardBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(doneBox.x + doneBox.width / 2, doneBox.y + doneBox.height / 2, { steps: 20 });
+  await page.mouse.up();
+  await page.waitForTimeout(1000); // wait for UI update
+} else {
+  throw new Error("Bounding box not found for movedCard or doneList");
+}
+
+// Final assertion
+const finalCard = doneList.locator('text=Sample card 1');
+await expect(finalCard).toBeVisible();
+
+});
